@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de Etiquetas Híbrido</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.17.4/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            }
+        }
+    </script>
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+            padding: 0;
+        }
+
+        .etiqueta {
+            width: 65.5mm; 
+            height: 35mm; 
+            padding: 2px;
+            box-sizing: border-box;
+            background-color: white;
+            break-inside: avoid; 
+            text-align: center;
+            font-size: 8pt;
+            overflow: hidden;
+            border: 1px solid #ddd; 
+        }
+        
+        .barcode-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 9mm; 
+        }
+
+        .message-box {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease-in-out;
+        }
+        
+        #input-table td {
+            border: 1px solid #e5e7eb;
+            padding: 6px 8px;
+            font-size: 0.875rem;
+            line-height: 1.25rem;
+            background-color: #fff;
+        }
+        #input-table td:focus {
+            outline: 2px solid #3b82f6;
+            background-color: #eff6ff;
+            z-index: 10;
+            position: relative;
+        }
+        #input-table th {
+            position: sticky;
+            top: 0;
+            background-color: #f9fafb;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: none; }
+            #print-area { width: 210mm; height: 297mm; margin: 0; padding: 0; }
+            #labels-container {
+                display: grid;
+                grid-template-columns: 65.5mm 65.5mm 65.5mm; 
+                gap: 1mm 1mm; 
+                margin: 8mm 5mm; 
+                border: none !important;
+            }
+            .etiqueta { 
+                border: 1px solid #999 !important; 
+                margin: 0;
+                box-shadow: none !important; /* <--- CAMBIO APLICADO AQUÍ */
+            }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto no-print">
+        <div class="flex items-end mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 mr-3">Generador de Etiquetas Almacén</h1>
+            <span class="text-sm font-medium text-gray-500 pb-0.5">By Eyner Garcia</span>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-lg mb-8 border border-blue-200">
+            <h2 class="text-xl font-semibold text-blue-700 mb-4">1. Cargar Datos</h2>
+            
+            <h3 class="text-lg font-semibold text-gray-700 mb-3 border-b pb-2">1.A Cargar Archivo Excel</h3>
+            <div class="flex flex-col md:flex-row items-center space-y-4 md:space-y-0 md:space-x-4 mb-6">
+                <input type="file" id="excel-file-input" accept=".xlsx, .xls" 
+                       class="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+            </div>
+
+            <h3 class="text-lg font-semibold text-gray-700 mt-6 mb-3 border-b pb-2 cursor-pointer flex justify-between items-center" onclick="toggleCollapsible('input-table-section', 'toggle-icon-table')">
+                <span>1.B Ingresar Datos en Tabla (Directo a Etiquetas)</span>
+                <span id="toggle-icon-table">▼</span>
+            </h3>
+            
+            <div id="input-table-section" class="collapsible-content">
+                <p class="text-sm text-gray-500 mt-2 mb-4">Usa esta tabla para generar etiquetas directamente en la vista previa, sin un resumen intermedio.</p>
+                <div class="overflow-auto max-h-96 rounded-lg border border-gray-300">
+                    <table id="input-table" class="min-w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">UNDM</th>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OC</th>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuario</th>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cantidad</th>
+                            </tr>
+                        </thead>
+                        <tbody id="input-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="mt-4"><button onclick="addInputRow()" class="px-5 py-2 bg-blue-100 text-blue-800 font-semibold rounded-full hover:bg-blue-200 transition">Añadir Fila</button></div>
+            </div>
+        </div>
+        
+        <div id="summary-section" class="bg-white p-6 rounded-xl shadow-lg mb-8 border border-gray-200" style="display: none;">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4">2. Resumen de Datos Cargados (Desde Excel)</h2>
+            <p class="text-sm text-gray-500 mb-4">Edita la cantidad o elimina filas antes de imprimir.</p>
+            <div class="overflow-x-auto rounded-lg border border-gray-200">
+                <table id="data-table" class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">UNDM</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OC</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuario</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cantidad</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table-body" class="bg-white divide-y divide-gray-200"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-lg mb-8 border border-indigo-200">
+             <h2 class="text-xl font-semibold text-indigo-700 mb-4">3. Controles de Salida</h2>
+            <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
+                <button onclick="printLabels()" id="print-button" class="w-full md:w-auto px-6 py-3 bg-indigo-500 text-white font-bold rounded-full shadow-md hover:bg-indigo-600 transition disabled:opacity-50">Imprimir Etiquetas</button>
+                <button onclick="clearAllData()" id="clear-button" class="w-full md:w-auto px-6 py-3 bg-red-700 text-white font-bold rounded-full shadow-md hover:bg-red-800 transition">Borrar Todo</button>
+            </div>
+        </div>
+    </div>
+    
+    <h2 class="text-2xl font-bold text-gray-800 max-w-7xl mx-auto mt-8 mb-4 no-print">4. Vista Previa de Etiquetas</h2>
+    <div id="print-area" class="max-w-7xl mx-auto p-4 bg-gray-200 rounded-lg">
+        <div id="labels-container" class="flex flex-wrap justify-start gap-2">
+             <p class="text-gray-500">Cargue datos para generar la vista previa.</p>
+        </div>
+    </div>
+    
+    <div id="message-container" class="message-box"></div>
+
+    <script>
+        let loadedData = [];
+        const inputElement = document.getElementById('excel-file-input');
+        const labelsContainer = document.getElementById('labels-container');
+        const printButton = document.getElementById('print-button');
+        const inputTableBody = document.getElementById('input-table-body');
+        const summarySection = document.getElementById('summary-section');
+        const dataTableBody = document.getElementById('data-table-body');
+
+
+        // --- FUNCIONES DE UTILIDAD ---
+        function showMessage(message, type = 'success') {
+            const container = document.getElementById('message-container');
+            const color = type === 'success' ? 'bg-green-100 text-green-800 border-green-400' : 'bg-red-100 text-red-800 border-red-400';
+            const element = document.createElement('div');
+            element.className = `p-3 rounded-xl shadow-lg mb-2 border ${color} opacity-0 transition-opacity duration-500`;
+            element.innerHTML = `<strong>${type === 'success' ? 'Éxito' : 'Error'}!</strong> ${message}`;
+            container.appendChild(element);
+            void element.offsetWidth; 
+            element.style.opacity = '1';
+            setTimeout(() => {
+                element.style.opacity = '0';
+                setTimeout(() => element.remove(), 500);
+            }, 5000);
+        }
+
+        function debounce(func, delay) {
+            let timeoutId;
+            return function(...args) {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => { func.apply(this, args); }, delay);
+            };
+        }
+
+        function toggleCollapsible(sectionId, iconId) {
+            const section = document.getElementById(sectionId);
+            const icon = document.getElementById(iconId);
+            if (!section || !icon) return;
+
+            if (section.style.maxHeight && section.style.maxHeight !== '0px') {
+                section.style.maxHeight = '0px'; 
+                icon.textContent = '▼';
+            } else {
+                section.style.maxHeight = section.scrollHeight + "px"; 
+                icon.textContent = '▲';
+            }
+        }
+
+        // --- LÓGICA DE LA TABLA DE ENTRADA (DIRECTO A ETIQUETAS) ---
+        function createInputRow() {
+            const row = document.createElement('tr');
+            for (let i = 0; i < 6; i++) {
+                const cell = document.createElement('td');
+                cell.setAttribute('contenteditable', 'true');
+                row.appendChild(cell);
+            }
+            return row;
+        }
+        
+        function addInputRow() {
+            inputTableBody.appendChild(createInputRow());
+        }
+
+        function initializeInputTable(rowCount = 15) {
+            inputTableBody.innerHTML = '';
+            for (let i = 0; i < rowCount; i++) {
+                addInputRow();
+            }
+        }
+
+        function handlePaste(event) {
+            const targetCell = event.target.closest('td');
+            if (!targetCell) return;
+            
+            event.preventDefault();
+            const pasteText = (event.clipboardData || window.clipboardData).getData('text/plain');
+            const pastedRows = pasteText.trim().split(/\r\n|\n|\r/);
+
+            let currentRow = targetCell.parentElement;
+            let startCellIndex = Array.from(currentRow.children).indexOf(targetCell);
+
+            pastedRows.forEach((rowText) => {
+                if (!currentRow) { addInputRow(); currentRow = inputTableBody.lastChild; }
+                const pastedCells = rowText.split('\t');
+                pastedCells.forEach((cellText, cellIndex) => {
+                    const targetCellIndex = startCellIndex + cellIndex;
+                    if (targetCellIndex < currentRow.children.length) {
+                        currentRow.children[targetCellIndex].innerText = cellText;
+                    }
+                });
+                currentRow = currentRow.nextElementSibling;
+            });
+            debouncedProcessInputTable();
+        }
+        
+        function handleKeyDown(event) {
+            if (event.key !== 'Tab') return;
+            const activeCell = document.activeElement.closest('td');
+            if (!activeCell) return;
+            const parentRow = activeCell.parentElement;
+            if (activeCell === parentRow.lastElementChild && parentRow === inputTableBody.lastElementChild) {
+                addInputRow();
+            }
+        }
+
+        function processInputTableData() {
+            summarySection.style.display = 'none'; // Asegurarse que el resumen esté oculto
+            const rows = inputTableBody.querySelectorAll('tr');
+            const newData = [];
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                const codigo = (cells[0]?.innerText || '').trim();
+                const cantidad = parseInt((cells[5]?.innerText || '').trim(), 10);
+                if (codigo && !isNaN(cantidad) && cantidad > 0) {
+                    newData.push({
+                        codigo,
+                        descripcion: (cells[1]?.innerText || '').trim(),
+                        undm: (cells[2]?.innerText || '').trim(),
+                        oc: (cells[3]?.innerText || '').trim(),
+                        usuario: (cells[4]?.innerText || '').trim(),
+                        cantidad
+                    });
+                }
+            });
+            loadedData = newData;
+            generateLabels();
+            updateUIState();
+        }
+
+        const debouncedProcessInputTable = debounce(processInputTableData, 700);
+        inputTableBody.addEventListener('paste', handlePaste);
+        inputTableBody.addEventListener('keydown', handleKeyDown);
+        inputTableBody.addEventListener('input', debouncedProcessInputTable);
+
+        // --- LÓGICA DE CARGA DE EXCEL Y RESUMEN ---
+        inputElement.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    const validRows = json.filter(row => row.length >= 6 && String(row[0] || '').trim() !== '');
+                    loadedData = validRows.map(row => ({
+                        codigo: String(row[0] || '').trim(), 
+                        descripcion: String(row[1] || '').trim(), 
+                        undm: String(row[2] || '').trim(), 
+                        oc: String(row[3] || '').trim(), 
+                        usuario: String(row[4] || '').trim(), 
+                        cantidad: parseInt(row[5]) || 0 
+                    })).filter(item => item.cantidad > 0); 
+                    
+                    if (loadedData.length > 0) {
+                        summarySection.style.display = 'block'; // ¡MOSTRAR RESUMEN!
+                        displayDataTable(loadedData); // ¡POBLAR RESUMEN!
+                        generateLabels();
+                        showMessage(`Se cargaron ${loadedData.length} líneas desde Excel.`, 'success');
+                    } else {
+                        showMessage(`El archivo Excel no contiene datos válidos.`, 'error');
+                    }
+                    updateUIState();
+                } catch (error) { showMessage('Error al procesar el archivo Excel.', 'error'); }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // FUNCIONES RESTAURADAS PARA LA TABLA DE RESUMEN
+        function displayDataTable(data) {
+            dataTableBody.innerHTML = '';
+            if (data.length === 0) {
+                dataTableBody.innerHTML = '<tr><td colspan="7" class="px-6 py-4 text-center text-sm text-gray-500">No hay datos válidos.</td></tr>'; 
+                return;
+            }
+            data.forEach((item, index) => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-2 whitespace-nowrap text-sm font-medium text-gray-900">${item.codigo}</td>
+                    <td class="px-6 py-2 whitespace-nowrap text-sm text-gray-600">${item.descripcion}</td>
+                    <td class="px-6 py-2 whitespace-nowrap text-sm text-gray-600">${item.undm}</td>
+                    <td class="px-6 py-2 whitespace-nowrap text-sm text-gray-600">${item.oc}</td>
+                    <td class="px-6 py-2 whitespace-nowrap text-sm text-gray-600">${item.usuario}</td>
+                    <td class="px-6 py-2 whitespace-nowrap">
+                        <input type="number" value="${item.cantidad}" min="1" oninput="editQuantity(${index}, this.value)" 
+                               class="w-20 p-1 border border-gray-300 rounded-lg text-center font-semibold" />
+                    </td>
+                    <td class="px-6 py-2 whitespace-nowrap"><button onclick="deleteRow(${index})" class="text-red-600 hover:text-red-900" title="Eliminar">Eliminar</button></td>`;
+                dataTableBody.appendChild(row);
+            });
+        }
+        
+        function deleteRow(index) {
+            if (index < 0 || index >= loadedData.length) return;
+            const deletedItem = loadedData.splice(index, 1); 
+            showMessage(`Línea (${deletedItem[0].codigo}) eliminada.`, 'success');
+            displayDataTable(loadedData); 
+            generateLabels(); 
+            updateUIState();
+        }
+
+        const debouncedGenerateLabelsFromSummary = debounce(() => {
+             showMessage(`Cantidad actualizada. Regenerando etiquetas...`, 'success');
+             generateLabels();
+        }, 500);
+
+        function editQuantity(index, value) {
+            if (index < 0 || index >= loadedData.length) return;
+            const newQuantity = parseInt(value, 10);
+            if (isNaN(newQuantity) || newQuantity < 0) {
+                showMessage('La cantidad debe ser un número positivo.', 'error');
+                return;
+            }
+            if (newQuantity === 0) {
+                deleteRow(index);
+                return;
+            }
+            loadedData[index].cantidad = newQuantity;
+            debouncedGenerateLabelsFromSummary(); 
+        }
+
+        // --- FUNCIONES COMUNES ---
+        function generateLabels() {
+            labelsContainer.innerHTML = ''; 
+            if (loadedData.length === 0) {
+                 labelsContainer.innerHTML = '<p class="text-gray-500">Cargue datos para generar la vista previa.</p>';
+                 updateUIState();
+                 return;
+            }
+            let totalLabels = loadedData.reduce((sum, item) => sum + (item.cantidad || 0), 0);
+            const fragment = document.createDocumentFragment();
+            loadedData.forEach(item => {
+                for (let i = 0; i < item.cantidad; i++) {
+                    const labelDiv = document.createElement('div');
+                    labelDiv.className = 'etiqueta';
+                    labelDiv.innerHTML = ` 
+                        <div class="text-[7pt] font-semibold uppercase h-[6mm] overflow-hidden leading-tight" title="${item.descripcion}">${item.descripcion}</div>
+                        <div class="barcode-container"><svg class="barcode-svg" data-code="${item.codigo}"></svg></div>
+                        <div class="text-3xl font-extrabold tracking-widest leading-none">${item.codigo}</div>
+                        <div class="flex justify-center items-center text-[7pt] font-semibold mt-0.5">
+                            <span class="mr-1">UNDM: ${item.undm}</span><span>OC: ${item.oc}</span>
+                        </div>
+                        <div class="text-[7pt]">Solicitante: <span class="font-bold">${item.usuario}</span></div>`;
+                    fragment.appendChild(labelDiv);
+                }
+            });
+            labelsContainer.appendChild(fragment);
+            labelsContainer.querySelectorAll('.barcode-svg').forEach(svg => {
+                try { JsBarcode(svg, svg.dataset.code, { format: "CODE128", displayValue: false, margin: 0, width: 1.2, height: 20 }); }
+                catch(e) { console.error(e); }
+            });
+            if (totalLabels > 0) { showMessage(`${totalLabels} etiquetas listas para imprimir.`, 'success'); }
+            updateUIState();
+        }
+
+        function printLabels() {
+            if (loadedData.length === 0) { showMessage('No hay datos para imprimir.', 'error'); return; }
+            window.print();
+        }
+        
+        function clearAllData() {
+            loadedData = [];
+            inputElement.value = '';
+            initializeInputTable(); 
+            summarySection.style.display = 'none'; 
+            displayDataTable([]); 
+            generateLabels(); 
+            updateUIState();
+            showMessage('Todos los datos han sido borrados.', 'success');
+        }
+
+        function updateUIState() {
+            printButton.disabled = loadedData.length === 0;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeInputTable();
+            updateUIState();
+        });
+    </script>
+</body>
+</html>
